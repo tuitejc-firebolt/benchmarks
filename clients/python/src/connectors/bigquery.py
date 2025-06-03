@@ -1,19 +1,11 @@
 from google.cloud import bigquery
 from google.oauth2 import service_account
-from typing import Optional, Dict, List, Any, Union
-from contextlib import contextmanager
+from typing import Optional, Dict, List, Any
 
 class BigQueryConnector:
-    def __init__(self, config: Dict[str, str]):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize BigQuery connector with configuration parameters.
-        
-        Args:
-            config (Dict[str, str]): Configuration dictionary containing:
-                - project_id: Google Cloud project ID
-                - credentials_path: Path to service account JSON file
-                - dataset: (Optional) Default dataset to use
-                - location: (Optional) Default location for jobs
         """
         self.config = config
         self._validate_config()
@@ -21,28 +13,30 @@ class BigQueryConnector:
         self._init_client()
 
     def _validate_config(self) -> None:
-        """Validate that required configuration parameters are present."""
         required_params = ['project_id', 'key']
         missing_params = [param for param in required_params if param not in self.config]
         if missing_params:
             raise ValueError(f"Missing required configuration parameters: {missing_params}")
 
     def _init_client(self) -> None:
-        """Initialize the BigQuery client."""
         project_id = self.config['project_id']
         dataset_id = self.config.get('dataset')
-        default_config = bigquery.QueryJobConfig(default_dataset=f"{project_id}.{dataset_id}")
         credentials = service_account.Credentials.from_service_account_info(self.config['key'])
+        default_config = None
+        if dataset_id:
+            default_config = bigquery.QueryJobConfig(default_dataset=f"{project_id}.{dataset_id}")
         self._client = bigquery.Client(
             project=project_id,
             credentials=credentials,
             default_query_job_config=default_config,
             location=self.config.get('location')
         )
+        print("[BigQueryConnector] Connected to BigQuery.", flush=True)
 
     def connect(self) -> None:
         """Establish a connection to BigQuery."""
-        self._init_client()  # Initialize the BigQuery client
+        if not self._client:
+            self._init_client()
 
     def execute_query(
         self, 
@@ -52,17 +46,10 @@ class BigQueryConnector:
     ) -> List[Dict]:
         """
         Execute a SQL query and return results as a list of dictionaries.
-        
-        Args:
-            query (str): SQL query to execute
-            params (Optional[Dict[str, Any]]): Query parameters
-            dry_run (bool): If True, only estimate bytes processed
-            
-        Returns:
-            List[Dict]: Query results as a list of dictionaries
         """
+        print(f"[BigQueryConnector] Executing query: {query[:200]}...", flush=True)
         job_config = bigquery.QueryJobConfig(
-            use_query_cache=False,  # Disable query cache
+            use_query_cache=False,
             dry_run=dry_run
         )
 
@@ -75,12 +62,14 @@ class BigQueryConnector:
         query_job = self._client.query(query, job_config=job_config)
         
         if dry_run:
+            print(f"[BigQueryConnector] Dry run: {query_job.total_bytes_processed} bytes processed.", flush=True)
             return [{'bytes_processed': query_job.total_bytes_processed}]
 
-        return [dict(row.items()) for row in query_job]
+        results = [dict(row.items()) for row in query_job]
+        print(f"[BigQueryConnector] Query returned {len(results)} rows.", flush=True)
+        return results
 
     def _get_param_type(self, value: Any) -> str:
-        """Determine BigQuery parameter type from Python value."""
         type_map = {
             str: 'STRING',
             int: 'INT64',
@@ -94,5 +83,6 @@ class BigQueryConnector:
     def close(self) -> None:
         """Close the BigQuery connection if it exists."""
         if self._client:
+            print("[BigQueryConnector] Closing connection.", flush=True)
             self._client.close()
             self._client = None

@@ -14,10 +14,10 @@ from pathlib import Path
 from queue import Queue
 from typing import Any, Dict, List, Optional
 
-from . import connectors
-from .exporters import CSVExporter, VisualExporter
+import connectors
+import exporters  # changed from 'from .exporters import CSVExporter, VisualExporter'
 
-ITERATIONS_PER_QUERY = 5
+ITERATIONS_PER_QUERY = 1  # <-- set this to 1 to run exactly 25 queries
 
 @dataclass
 class QueryResult:
@@ -66,7 +66,10 @@ class BenchmarkRunner:
         concurrency: int = 1,
         output_dir: str = 'benchmark_results',
         execute_setup: bool = False,
-        benchmark_path: str = ""
+        benchmark_path: str = "",
+        results_queue: Optional[Queue] = None,  # <-- add this parameter
+        run_warmup=True,
+        warmup_status_callback=None,
     ):
         self.benchmark_name = benchmark_name
         self.vendors = vendors
@@ -78,6 +81,9 @@ class BenchmarkRunner:
         self.logger = logging.getLogger(__name__)
         self.benchmark_path = benchmark_path
         self.connection_pools = {}
+        self.results_queue = results_queue  # store the queue
+        self.run_warmup = run_warmup
+        self.warmup_status_callback = warmup_status_callback
         
         # Load credentials
         with open(creds_file, 'r') as f:
@@ -131,26 +137,52 @@ class BenchmarkRunner:
     def _run_query(self, vendor: str, query_name: str, query: str, concurrent_run: int) -> Dict[str, Any]:
         """Execute a single query and return its results."""
         start_time = time.time()
+        connection = None
         try:
-            # Acquire a connection from the pool
+            print(f"[BenchmarkRunner] About to get connection for {vendor}", flush=True)
+            import sys; sys.stdout.flush()
             connection = self.connection_pools[vendor].get_connection()
+            print(f"[BenchmarkRunner] Got connection for {vendor}, running query {query_name} (concurrent_run={concurrent_run})", flush=True)
+            import sys; sys.stdout.flush()
             results = connection.execute_query(query)
+            print(f"[BenchmarkRunner] Finished query {query_name} for {vendor} (concurrent_run={concurrent_run}), got {len(results) if results else 0} rows", flush=True)
+            import sys; sys.stdout.flush()
             duration = time.time() - start_time
-            
-            return {
+
+            result = {
                 'vendor': vendor,
                 'query_name': query_name,
+                'query': query,  # <-- Add the actual SQL text here
                 'duration': duration,
                 'rows': len(results) if results else 0,
                 'status': 'success',
                 'timestamp': datetime.now().isoformat(),
                 'concurrent_run': concurrent_run
             }
+            if self.results_queue:
+                print(f"[BenchmarkRunner] Putting result for {vendor} query {query_name} into queue (before put, queue size: {self.results_queue.qsize()})", flush=True)
+                import sys; sys.stdout.flush()
+                self.results_queue.put(result)
+                print(f"[BenchmarkRunner] Queue size after put: {self.results_queue.qsize()}", flush=True)
+                import sys; sys.stdout.flush()
+                try:
+                    test_peek = self.results_queue.get_nowait()
+                    print(f"[BenchmarkRunner] DEBUG: Immediately got from queue: {test_peek}", flush=True)
+                    self.results_queue.put(test_peek)
+                except Exception as e:
+                    print(f"[BenchmarkRunner] DEBUG: Queue empty after put: {e}", flush=True)
+                import sys; sys.stdout.flush()
+            print(f"[BenchmarkRunner] COMPLETED {vendor} {query_name} (concurrent_run={concurrent_run})", flush=True)
+            import sys; sys.stdout.flush()
+            return result
         except Exception as e:
             self.logger.error(f"Error running query {query_name} for {vendor}: {str(e)}")
+            print(f"[BenchmarkRunner] Error running query {query_name} for {vendor}: {str(e)}", flush=True)
+            import sys; sys.stdout.flush()
             return {
                 'vendor': vendor,
                 'query_name': query_name,
+                'query': query,  # <-- Add the actual SQL text here for error rows too
                 'duration': time.time() - start_time,
                 'rows': 0,
                 'status': 'error',
@@ -159,8 +191,8 @@ class BenchmarkRunner:
                 'concurrent_run': concurrent_run
             }
         finally:
-            # Return the connection to the pool
-            self.connection_pools[vendor].return_connection(connection)
+            if connection:
+                self.connection_pools[vendor].return_connection(connection)
 
     def _run_concurrent_query(self, vendor: str, query: str, query_number: int) -> List[QueryResult]:
         """Run a query concurrently and return the results."""
@@ -182,15 +214,19 @@ class BenchmarkRunner:
                     ))
                 except Exception as e:
                     self.logger.error(f"Error in concurrent execution: {str(e)}")
-        
+        # Do NOT update st.session_state here!
         return results
     
     def _get_sql_file(self, vendor, file_type):
         # Construct the general and vendor-specific file paths
-        general_file= Path(self.benchmark_path) / f"{file_type}.sql"
-        # general_file = os.path.join(self.benchmark_path, f"{file_type}.sql")
-        vendor_file = Path(self.benchmark_path) / f"{vendor}"/ f"{file_type}.sql"
+        general_file = Path(self.benchmark_path) / f"{file_type}.sql"
+        vendor_dir = Path(self.benchmark_path) / f"{vendor}"
+        vendor_file = vendor_dir / f"{file_type}.sql"
 
+        # Log which directory is being checked
+        self.logger.info(f"Looking for SQL file for vendor '{vendor}': {vendor_file}")
+        if not vendor_dir.exists():
+            self.logger.error(f"Vendor directory does not exist: {vendor_dir}")
         # Check if vendor-specific file exists, return it if it does, otherwise return the general file
         if os.path.exists(vendor_file):
             return vendor_file
@@ -279,11 +315,11 @@ class BenchmarkRunner:
             # Ensure the directory exists
             os.makedirs(self.output_dir, exist_ok=True)
             # Use the CSV Exporter to export results
-            csv_exporter = CSVExporter()
+            csv_exporter = exporters.CSVExporter()  # changed
             csv_exporter.export(results, self.output_dir)
 
             # Visual export
-            visual_exporter = VisualExporter(self.output_dir)
+            visual_exporter = exporters.VisualExporter(self.output_dir)  # changed
             visual_exporter.export(results, self.output_dir)
 
         return results
@@ -304,15 +340,30 @@ class BenchmarkRunner:
 
     def _execute_warmup_script(self, vendor: str):
         """Execute the warmup SQL script for the vendor."""
+        if not getattr(self, "run_warmup", True):
+            return True
         try:
-            # Load the warmup SQL file for the vendor
             warmup_file = self._get_sql_file(vendor, "warmup")
             warmup_queries = self._load_queries(warmup_file)
-            for query in warmup_queries:
+            total = len(warmup_queries)
+            for idx, query in enumerate(warmup_queries):
+                msg = f"Warming up database ({vendor}): Step {idx+1} of {total}"
+                if self.warmup_status_callback:
+                    self.warmup_status_callback(msg)
+                print(f"[BenchmarkRunner] {msg}: {query[:200]}...", flush=True)
+                import sys; sys.stdout.flush()
                 self.connectors[vendor].execute_query(query)
+                print(f"[BenchmarkRunner] Finished warmup query {idx+1}/{total} for {vendor}", flush=True)
+                import sys; sys.stdout.flush()
+            if self.warmup_status_callback:
+                self.warmup_status_callback(None)
             self.logger.info(f"Executed warmup script: {warmup_file}")
         except Exception as e:
             self.logger.error(f"Error executing warmup script {warmup_file}: {str(e)}")
+            print(f"[BenchmarkRunner] Error executing warmup script {warmup_file}: {str(e)}", flush=True)
+            import sys; sys.stdout.flush()
+            if self.warmup_status_callback:
+                self.warmup_status_callback(None)
             return False
         return True
 
