@@ -178,12 +178,19 @@ if results:
             alt.Chart(data)
             .mark_bar()
             .encode(
-                y=alt.Y("vendor:N", sort=None, title="Vendor"),
+                y=alt.Y(
+                    "vendor:N",
+                    sort=None,
+                    title="Vendor",
+                    axis=alt.Axis(labelExpr="datum.value", labelOverlap=False, labelFontSize=14, ticks=True)
+                ),
                 x=alt.X(f"{metric}:Q", title=metric.capitalize()),
                 color=alt.Color("vendor:N", scale=alt.Scale(domain=list(vendor_colors.keys()), range=list(vendor_colors.values())), legend=None),
                 tooltip=["vendor", metric]
             )
             .properties(height=120)
+        ).configure_axis(
+            labelOverlap=False  # Ensure all vendor labels are always shown
         )
         return chart
 
@@ -231,18 +238,21 @@ if results:
         df["start_time"] = df["timestamp"].apply(parse_ts)
         min_time = df["start_time"].min()
         df = df[df["start_time"].notnull()]
-        # Fix: Use relative seconds from min_time for x-axis
+        # Use relative seconds from min_time for x-axis
         df["elapsed_sec"] = ((df["start_time"] - min_time).dt.total_seconds()).astype(int)
-        concurrency_df = df.groupby("elapsed_sec").size().reset_index(name="queries")
+        # Group by vendor and elapsed_sec for per-vendor concurrency
+        concurrency_df = df.groupby(["vendor", "elapsed_sec"]).size().reset_index(name="queries")
+        import altair as alt
         concurrency_chart.altair_chart(
             alt.Chart(concurrency_df)
             .mark_line(point=True)
             .encode(
                 x=alt.X("elapsed_sec:Q", title="Second"),
                 y=alt.Y("queries:Q", title="Queries Started"),
-                tooltip=["elapsed_sec", "queries"]
+                color=alt.Color("vendor:N", scale=alt.Scale(domain=list(vendor_colors.keys()), range=list(vendor_colors.values())), legend=alt.Legend(title="Vendor")),
+                tooltip=["vendor", "elapsed_sec", "queries"]
             )
-            .properties(height=200, title="Concurrency Per Second"),
+            .properties(height=200, title="Concurrency Per Second (by Vendor)"),
             use_container_width=True
         )
     else:
