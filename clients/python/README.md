@@ -26,25 +26,8 @@ If you have other Python-based projects, it's recommended to do this via
 To run the benchmark, use the following command:
 
 ```bash
-python -m src.main <benchmark_name> --vendors <vendor1,vendor2,...> [--execute-setup <True|False>]
+streamlit run /Users/jon.tuite/Firescale/benchmarks/clients/python/src/main.py
 ```
-
-### Options
-
-- `benchmark_name`: The name of the benchmark to run.
-- `--vendors`: Comma-separated list of vendors to benchmark (e.g., `snowflake,firebolt`).
-- `--execute-setup`: (Optional) Set to `True` to execute the `setup.sql` file before running benchmarks. Default is `False`.
-- `--pool-size`: (Optional) Connection pool size. Default is `5`.
-- `--concurrency`: (Optional) Concurrency level. Default is `1`.
-- `--output-dir`: (Optional) Output directory. Default is `benchmark_results`.
-- `--creds`: (Optional) Path to credentials file. Default is `config/credentials/credentials.json`.
-
-### Example
-
-```bash
-python -m src.main my_benchmark --vendors snowflake,firebolt --execute-setup True
-```
-
 ## Flexibility in SQL File Usage
 
 This project allows for flexibility in how SQL files are used:
