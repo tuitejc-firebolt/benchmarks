@@ -86,7 +86,7 @@ If you have other Python-based projects, it's recommended to do this with
 Then run:
 
 ```bash
-/clients/python$ python -m src.main FireScale --vendors firebolt --execute-setup True
+streamlit run /Firescale/benchmarks/clients/python/src/main.py
 ```
 
 This will ingest the data and then kick off an initial benchmark power run.
