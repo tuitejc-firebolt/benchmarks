@@ -1,5 +1,58 @@
 # Firebolt Benchmarks
 
+🔥 **Performance benchmarking tool for comparing Firebolt with other cloud data warehouses**
+
+## 🚀 Quick Start (New Streamlit UI)
+
+### Automated Setup
+```bash
+# Clone and setup
+git clone https://github.com/tuitejc-firebolt/benchmarks.git
+cd benchmarks
+./setup.sh  # On macOS/Linux, or setup.bat on Windows
+```
+
+### Configure & Run
+```bash
+# 1. Edit credentials
+nano config/credentials/credentials.json
+
+# 2. Start the web interface
+cd clients/python/src
+streamlit run main.py
+```
+
+### Use the Tool
+1. Open `http://localhost:8501` in your browser
+2. Select vendors (firebolt, redshift, snowflake, etc.)
+3. Click "▶️ Run Benchmark" 
+4. View real-time performance & cost analysis!
+
+📖 **For detailed setup instructions, see [INSTALLATION.md](INSTALLATION.md)**
+
+---
+
+## About FireScale Benchmark
+
+In this repo, you'll find the FireScale benchmark, as well as the benchmarking clients
+and benchmark results that Firebolt has published. This includes the DDL and queries
+for setting up and running FireScale on different vendors, as well as the results for
+how various vendors performed on FireScale.
+
+## FireScale Benchmark Results
+
+[To view benchmark results, click here.](results/)
+
+## Run FireScale Yourself
+
+Firebolt has provided two clients in this repo: one written in Python, and one written
+with Node.js with Grafana K6. The Python client is for power runs (executing one query
+at a time in a sequential pattern) and for concurrency benchmarking with low expected
+query throughput (<100 QPS). The K6 client is for benchmarking concurrent scenarios
+with high query volumes and hundreds or thousands of queries being completed each second.
+
+The Python client can be extended with benchmarks beyond just FireScale, though at thiss
+
 In this repo, you’ll find the FireScale benchmark, as well as the benchmarking clients
 and benchmark results that Firebolt has published. This includes the DDL and queries
 for setting up and running FireScale on different vendors, as well as the results for
