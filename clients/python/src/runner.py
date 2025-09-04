@@ -70,6 +70,7 @@ class BenchmarkRunner:
         results_queue: Optional[Queue] = None,  # <-- add this parameter
         run_warmup=True,
         warmup_status_callback=None,
+        logging_level: str = "Information",
     ):
         self.benchmark_name = benchmark_name
         self.vendors = vendors
@@ -79,6 +80,16 @@ class BenchmarkRunner:
         self.output_dir = output_dir
         self.execute_setup = execute_setup
         self.logger = logging.getLogger(__name__)
+        self.logging_level = logging_level  # Store logging level for use in other methods
+        
+        # Configure logging level
+        if logging_level.lower() == "debug":
+            self.logger.setLevel(logging.DEBUG)
+            logging.getLogger().setLevel(logging.DEBUG)
+        else:
+            self.logger.setLevel(logging.INFO)
+            logging.getLogger().setLevel(logging.INFO)
+            
         self.benchmark_path = benchmark_path
         self.connection_pools = {}
         self.results_queue = results_queue  # store the queue
@@ -105,34 +116,99 @@ class BenchmarkRunner:
                 lines = f.readlines()
                 queries = []
                 current_query = []
-
+                
                 for line in lines:
                     line = line.strip()
                     # Skip empty lines
                     if not line:
                         continue
-                    # Remove inline comments
-                    line = line.split('--')[0].strip()  # Remove everything after '--'
+                    
+                    # Smart comment removal: only remove '--' that are not inside string literals
+                    processed_line = self._remove_sql_comments(line)
+                    
                     # Skip lines that are now empty after removing comments
-                    if not line:
+                    if not processed_line:
                         continue
+                    
                     # If the line ends with a semicolon, it's a complete query
-                    if line.endswith(';'):
-                        current_query.append(line[:-1])  # Remove the semicolon
-                        queries.append(' '.join(current_query).strip())
+                    if processed_line.endswith(';'):
+                        current_query.append(processed_line[:-1])  # Remove the semicolon
+                        if current_query:  # Only add non-empty queries
+                            query_text = ' '.join(current_query).strip()
+                            if query_text and not query_text.isspace():  # Ensure the query is not empty or just whitespace
+                                queries.append(query_text)
+                                if self.logging_level.lower() == "debug":
+                                    print(f"[DEBUG] Parsed query {len(queries)} from {query_file}: {query_text[:100]}...")
                         current_query = []  # Reset for the next query
                     else:
-                        current_query.append(line)
+                        current_query.append(processed_line)
 
                 # Handle any remaining query that doesn't end with a semicolon
                 if current_query:
-                    queries.append(' '.join(current_query).strip())
+                    query_text = ' '.join(current_query).strip()
+                    if query_text and not query_text.isspace():  # Ensure the query is not empty or just whitespace
+                        queries.append(query_text)
+                        if self.logging_level.lower() == "debug":
+                            print(f"[DEBUG] Parsed final query {len(queries)} from {query_file}: {query_text[:100]}...")
 
+                if self.logging_level.lower() == "debug":
+                    print(f"[DEBUG] Total queries parsed from {query_file}: {len(queries)}")
+                    
+                # Critical: Ensure exactly 25 queries for all vendors
+                if len(queries) != 25:
+                    error_msg = f"Expected 25 queries but found {len(queries)} in {query_file}"
+                    if self.logging_level.lower() == "debug":
+                        print(f"[ERROR] {error_msg}")
+                    else:
+                        print(f"[ERROR] {error_msg}")
+                    # Rather than failing, let's pad or truncate to ensure consistency
+                    if len(queries) > 25:
+                        print(f"[WARNING] Truncating {len(queries)} queries to 25")
+                        queries = queries[:25]
+                    elif len(queries) < 25:
+                        print(f"[WARNING] Only {len(queries)} queries found, expected 25. Check SQL file format.")
+                        # Pad with placeholder queries to maintain numbering consistency
+                        while len(queries) < 25:
+                            queries.append(f"-- Placeholder query {len(queries) + 1} (missing from file)")
+                    
                 return queries
         elif isinstance(query_file, list):
             return query_file
         else:
             raise TypeError("query_file must be a file path or list of queries")
+
+    def _remove_sql_comments(self, line):
+        """Remove SQL comments while preserving '--' inside string literals."""
+        result = []
+        in_single_quote = False
+        in_double_quote = False
+        i = 0
+        
+        while i < len(line):
+            char = line[i]
+            
+            # Handle single quotes
+            if char == "'" and not in_double_quote:
+                in_single_quote = not in_single_quote
+                result.append(char)
+            # Handle double quotes  
+            elif char == '"' and not in_single_quote:
+                in_double_quote = not in_double_quote
+                result.append(char)
+            # Handle potential comment start
+            elif char == '-' and i + 1 < len(line) and line[i + 1] == '-':
+                # If we're inside quotes, this is not a comment
+                if in_single_quote or in_double_quote:
+                    result.append(char)
+                else:
+                    # This is a real comment, stop processing the line
+                    break
+            else:
+                result.append(char)
+            
+            i += 1
+        
+        return ''.join(result).strip()
 
     def _run_query(self, vendor: str, query_name: str, query: str, concurrent_run: int) -> Dict[str, Any]:
         """Execute a single query and return its results."""
@@ -197,8 +273,9 @@ class BenchmarkRunner:
     def _run_concurrent_query(self, vendor: str, query: str, query_number: int) -> List[QueryResult]:
         """Run a query concurrently and return the results."""
         results = []
+        query_name = f"query {query_number}"  # Create consistent query name
         with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
-            future_to_query = {executor.submit(self._run_query, vendor, query_number, query, i+1): query for i in range(self.concurrency)}
+            future_to_query = {executor.submit(self._run_query, vendor, query_name, query, i+1): query for i in range(self.concurrency)}
             
             for future in as_completed(future_to_query):
                 try:

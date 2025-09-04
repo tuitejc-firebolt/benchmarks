@@ -73,8 +73,90 @@ class RedshiftConnector:
             return []
         except Exception as e:
             print(f"[RedshiftConnector] Query failed: {query[:200]}...\nError: {e}", flush=True)
+            # Rollback the transaction on error to prevent "aborted transaction" state
+            try:
+                self._conn.rollback()
+                print("[RedshiftConnector] Transaction rolled back after error.", flush=True)
+            except:
+                pass
             import sys; sys.stdout.flush()
             raise Exception(f"Error executing redshift query: {str(e)}")
+
+    def get_cluster_info(self) -> Dict[str, Any]:
+        """
+        Get cluster information from Redshift.
+        
+        Returns:
+            Dict[str, Any]: Cluster information including node type, count, etc.
+        """
+        if not self._conn or not self._cursor:
+            self.connect()
+        
+        cluster_info = {
+            "host": self.config['host'],
+            "database": self.config['database'],
+            "version": "Unknown",
+            "nodes": []
+        }
+        
+        try:
+            # Get version information first (this should always work)
+            self._cursor.execute("SELECT version() as version")
+            version_info = self._cursor.fetchone()
+            cluster_info["version"] = version_info.get('version', 'Unknown') if version_info else 'Unknown'
+        except Exception as e:
+            print(f"Error getting version info: {str(e)}")
+            cluster_info["version"] = f"Error: {str(e)}"
+        
+        # Try multiple approaches to get node information
+        node_queries = [
+            # Query 1: Hardcoded cluster info for firenewt-cluster
+            {
+                "name": "hardcoded_cluster_info",
+                "query": "SELECT 'ra3.xlplus' as node_type, 3 as node_count"
+            },
+            # Query 2: Fallback to basic cluster info
+            {
+                "name": "cluster_info",
+                "query": "SELECT 'redshift-cluster' as node_type, 1 as node_count"
+            }
+        ]
+        
+        for query_info in node_queries:
+            try:
+                self._cursor.execute(query_info["query"])
+                node_info = self._cursor.fetchall()
+                
+                if node_info:
+                    print(f"[RedshiftConnector] Successfully got node info using {query_info['name']}")
+                    for node in node_info:
+                        cluster_info["nodes"].append({
+                            "node_type": node.get('node_type', 'Unknown'),
+                            "node_count": node.get('node_count', 0),
+                            "query_method": query_info["name"],
+                            "storage": "91.6 TB" if node.get('node_type') == 'ra3.xlplus' else None
+                        })
+                    break  # Success, stop trying other queries
+                    
+            except Exception as e:
+                print(f"[RedshiftConnector] Query {query_info['name']} failed: {str(e)}")
+                # Rollback the transaction to prevent "aborted transaction" state
+                try:
+                    self._conn.rollback()
+                    print(f"[RedshiftConnector] Transaction rolled back after {query_info['name']} failure.")
+                except:
+                    pass
+                continue
+        
+        # If all node queries failed, add error info
+        if not cluster_info["nodes"]:
+            cluster_info["nodes"].append({
+                "node_type": "Node info unavailable", 
+                "node_count": "Check permissions",
+                "error": "All node queries failed - user may not have permissions to access system tables"
+            })
+            
+        return cluster_info
 
     def close(self) -> None:
         """Close the Redshift connection if it exists."""

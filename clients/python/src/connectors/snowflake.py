@@ -65,6 +65,52 @@ class SnowflakeConnector:
             import sys; sys.stdout.flush()
             raise Exception(f"Error executing snowflake query: {str(e)}")
 
+    def get_cluster_info(self) -> Dict[str, Any]:
+        """
+        Get warehouse information from Snowflake.
+        
+        Returns:
+            Dict[str, Any]: Warehouse information including size, status, etc.
+        """
+        if not self._conn or not self._cursor:
+            self.connect()
+        
+        try:
+            warehouse_name = self.config.get('warehouse', 'Unknown')
+            
+            # Get warehouse information
+            self._cursor.execute("SHOW WAREHOUSES LIKE %s", (warehouse_name,))
+            warehouse_info = self._cursor.fetchone()
+            
+            if warehouse_info:
+                return {
+                    "warehouse_name": warehouse_info.get('name', warehouse_name),
+                    "size": warehouse_info.get('size', 'Unknown'),
+                    "state": warehouse_info.get('state', 'Unknown'),
+                    "type": warehouse_info.get('type', 'Unknown'),
+                    "min_cluster_count": warehouse_info.get('min_cluster_count', 'Unknown'),
+                    "max_cluster_count": warehouse_info.get('max_cluster_count', 'Unknown')
+                }
+            else:
+                return {
+                    "warehouse_name": warehouse_name,
+                    "size": "Unknown",
+                    "state": "Unknown",
+                    "type": "Unknown",
+                    "min_cluster_count": "Unknown", 
+                    "max_cluster_count": "Unknown"
+                }
+        except Exception as e:
+            print(f"Error getting warehouse info: {str(e)}")
+            return {
+                "warehouse_name": self.config.get('warehouse', 'Unknown'),
+                "size": "Error retrieving info",
+                "state": "Error retrieving info",
+                "type": "Error retrieving info",
+                "min_cluster_count": "Error retrieving info",
+                "max_cluster_count": "Error retrieving info"
+            }
+
     def close(self) -> None:
         """Close the Snowflake connection if it exists."""
         if self._conn:

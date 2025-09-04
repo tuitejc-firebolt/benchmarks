@@ -18,6 +18,7 @@ def get_connector_class(vendor: str):
         "firebolt": FireboltConnector,
         "bigquery": BigQueryConnector,
         "redshift": RedshiftConnector,
+        "google": BigQueryConnector,  # google maps to BigQuery
     }
     if vendor not in connector_map:
         raise ValueError(f"Unsupported vendor: {vendor}")

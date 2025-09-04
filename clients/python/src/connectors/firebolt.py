@@ -63,11 +63,115 @@ class FireboltConnector:
                 self.cursor.execute(query)
             
             if self.cursor.description:  # If the query returns results
-                return self.cursor.fetchall()
+                results = self.cursor.fetchall()
+                if results:
+                    # Convert tuples to dictionaries using column names
+                    column_names = [desc[0] for desc in self.cursor.description]
+                    return [dict(zip(column_names, row)) if isinstance(row, (list, tuple)) else row for row in results]
+                return []
             return []
             
         except Exception as e:
             raise Exception(f"Error executing query: {str(e)}")
+
+    def get_cluster_info(self) -> Dict[str, Any]:
+        """
+        Get cluster information from Firebolt.
+        
+        Returns:
+            Dict[str, Any]: Cluster information including size, nodes, etc.
+        """
+        if not self._conn or not self.cursor:
+            self.connect()
+        
+        try:
+            # First try to get engine information from information_schema
+            try:
+                self.cursor.execute("SELECT * FROM information_schema.engines WHERE engine_name = %s", (self.config['engine_name'],))
+                engine_info = self.cursor.fetchone()
+                
+                if engine_info:
+                    # Get column names from cursor description
+                    column_names = [desc[0] for desc in self.cursor.description]
+                    # Convert tuple/list to dictionary
+                    engine_dict = dict(zip(column_names, engine_info)) if isinstance(engine_info, (list, tuple)) else engine_info
+                    
+                    return {
+                        "engine_name": engine_dict.get('engine_name', self.config['engine_name']),
+                        "type": engine_dict.get('type', 'Unknown'),
+                        "family": engine_dict.get('family', 'Unknown'),
+                        "nodes": engine_dict.get('nodes', 'Unknown'),
+                        "clusters": engine_dict.get('clusters', 'Unknown'),
+                        "status": engine_dict.get('status', 'Unknown'),
+                        "version": engine_dict.get('version', 'Unknown'),
+                        "fbu_rate": str(engine_dict.get('fbu_rate', 'Unknown')),
+                        "auto_start": engine_dict.get('auto_start', 'Unknown'),
+                        "auto_stop": engine_dict.get('auto_stop', 'Unknown')
+                    }
+            except Exception as schema_error:
+                print(f"information_schema.engines query failed: {schema_error}")
+                
+            # Fallback: try alternative queries to get engine info
+            try:
+                # Try SHOW ENGINES command
+                self.cursor.execute("SHOW ENGINES")
+                engines = self.cursor.fetchall()
+                
+                if engines:
+                    # Get column names from cursor description
+                    column_names = [desc[0] for desc in self.cursor.description]
+                    
+                    for engine_row in engines:
+                        # Convert tuple/list to dictionary
+                        engine_dict = dict(zip(column_names, engine_row)) if isinstance(engine_row, (list, tuple)) else engine_row
+                        
+                        engine_name_field = engine_dict.get('engine_name') or engine_dict.get('name')
+                        if engine_name_field == self.config['engine_name']:
+                            return {
+                                "engine_name": engine_name_field,
+                                "type": engine_dict.get('type', 'Unknown'),
+                                "family": engine_dict.get('family', 'Unknown'),
+                                "nodes": engine_dict.get('nodes', 'Unknown'),
+                                "clusters": engine_dict.get('clusters', 'Unknown'),
+                                "status": engine_dict.get('status', 'Unknown'),
+                                "version": engine_dict.get('version', 'Unknown'),
+                                "fbu_rate": str(engine_dict.get('fbu_rate', 'Unknown')),
+                                "auto_start": engine_dict.get('auto_start', 'Unknown'),
+                                "auto_stop": engine_dict.get('auto_stop', 'Unknown')
+                            }
+                            
+            except Exception as show_error:
+                print(f"SHOW ENGINES query failed: {show_error}")
+            
+            # Final fallback - just return basic info
+            return {
+                "engine_name": self.config['engine_name'],
+                "type": "Information not available",
+                "family": "Information not available",
+                "nodes": "Information not available",
+                "clusters": "Information not available",
+                "status": "Information not available",
+                "version": "Information not available",
+                "fbu_rate": "Information not available",
+                "auto_start": "Information not available",
+                "auto_stop": "Information not available"
+            }
+                
+        except Exception as e:
+            error_msg = f"Error getting cluster info: {str(e)}"
+            print(error_msg)
+            return {
+                "engine_name": self.config['engine_name'],
+                "type": f"Error: {str(e)}",
+                "family": f"Error: {str(e)}",
+                "nodes": f"Error: {str(e)}",
+                "clusters": f"Error: {str(e)}",
+                "status": f"Error: {str(e)}",
+                "version": f"Error: {str(e)}",
+                "fbu_rate": f"Error: {str(e)}",
+                "auto_start": f"Error: {str(e)}",
+                "auto_stop": f"Error: {str(e)}"
+            }
 
     def close(self) -> None:
         """Close the Firebolt connection if it exists."""

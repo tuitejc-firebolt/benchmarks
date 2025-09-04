@@ -80,6 +80,51 @@ class BigQueryConnector:
         }
         return type_map.get(type(value), 'STRING')
     
+    def get_cluster_info(self) -> Dict[str, Any]:
+        """
+        Get project and dataset information from BigQuery.
+        
+        Returns:
+            Dict[str, Any]: Project and dataset information
+        """
+        try:
+            project_id = self.config['project_id']
+            dataset_id = self.config.get('dataset', 'Unknown')
+            location = self.config.get('location', 'Unknown')
+            
+            # Get project information 
+            project = self._client.get_project(project_id)
+            
+            cluster_info = {
+                "project_id": project_id,
+                "project_name": project.friendly_name or project_id,
+                "dataset": dataset_id,
+                "location": location,
+                "default_table_expiration": "Unknown"
+            }
+            
+            # Try to get dataset information if dataset is specified
+            if dataset_id and dataset_id != 'Unknown':
+                try:
+                    dataset_ref = self._client.dataset(dataset_id)
+                    dataset = self._client.get_dataset(dataset_ref)
+                    cluster_info["dataset_location"] = dataset.location
+                    cluster_info["default_table_expiration"] = str(dataset.default_table_expiration_ms) if dataset.default_table_expiration_ms else "None"
+                except Exception as e:
+                    print(f"Could not get dataset info: {e}")
+            
+            return cluster_info
+            
+        except Exception as e:
+            print(f"Error getting cluster info: {str(e)}")
+            return {
+                "project_id": self.config.get('project_id', 'Unknown'),
+                "project_name": "Error retrieving info",
+                "dataset": self.config.get('dataset', 'Unknown'),
+                "location": self.config.get('location', 'Unknown'),
+                "default_table_expiration": "Error retrieving info"
+            }
+    
     def close(self) -> None:
         """Close the BigQuery connection if it exists."""
         if self._client:
